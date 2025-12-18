@@ -104,59 +104,65 @@ func (e *ProjectionExec) open(ctx context.Context) error {
 //
 // Here we explain the execution flow of the parallel projection implementation.
 // There are 3 main components:
-//   1. "projectionInputFetcher": Fetch input "Chunk" from child.
-//   2. "projectionWorker":       Do the projection work.
-//   3. "ProjectionExec.Next":    Return result to parent.
+//  1. "projectionInputFetcher": Fetch input "Chunk" from child.
+//  2. "projectionWorker":       Do the projection work.
+//  3. "ProjectionExec.Next":    Return result to parent.
 //
 // 1. "projectionInputFetcher" gets its input and output resources from its
 // "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it fetches child's result into "input.chk" and:
-//   a. Dispatches this input to the worker specified in "input.targetWorker"
-//   b. Dispatches this output to the main thread: "ProjectionExec.Next"
-//   c. Dispatches this output to the worker specified in "input.targetWorker"
+//
+//	a. Dispatches this input to the worker specified in "input.targetWorker"
+//	b. Dispatches this output to the main thread: "ProjectionExec.Next"
+//	c. Dispatches this output to the worker specified in "input.targetWorker"
+//
 // It is finished and exited once:
-//   a. There is no more input from child.
-//   b. "ProjectionExec" close the "globalFinishCh"
+//
+//	a. There is no more input from child.
+//	b. "ProjectionExec" close the "globalFinishCh"
 //
 // 2. "projectionWorker" gets its input and output resources from its
 // "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it calculates the projection result use "input.chk" as the input
 // and "output.chk" as the output, once the calculation is done, it:
-//   a. Sends "nil" or error to "output.done" to mark this input is finished.
-//   b. Returns the "input" resource to "projectionInputFetcher.inputCh"
+//
+//	a. Sends "nil" or error to "output.done" to mark this input is finished.
+//	b. Returns the "input" resource to "projectionInputFetcher.inputCh"
+//
 // They are finished and exited once:
-//   a. "ProjectionExec" closes the "globalFinishCh"
+//
+//	a. "ProjectionExec" closes the "globalFinishCh"
 //
 // 3. "ProjectionExec.Next" gets its output resources from its "outputCh" channel.
 // After receiving an output from "outputCh", it should wait to receive a "nil"
 // or error from "output.done" channel. Once a "nil" or error is received:
-//   a. Returns this output to its parent
-//   b. Returns the "output" resource to "projectionInputFetcher.outputCh"
 //
-//  +-----------+----------------------+--------------------------+
-//  |           |                      |                          |
-//  |  +--------+---------+   +--------+---------+       +--------+---------+
-//  |  | projectionWorker |   + projectionWorker |  ...  + projectionWorker |
-//  |  +------------------+   +------------------+       +------------------+
-//  |       ^       ^              ^       ^                  ^       ^
-//  |       |       |              |       |                  |       |
-//  |    inputCh outputCh       inputCh outputCh           inputCh outputCh
-//  |       ^       ^              ^       ^                  ^       ^
-//  |       |       |              |       |                  |       |
-//  |                              |       |
-//  |                              |       +----------------->outputCh
-//  |                              |       |                      |
-//  |                              |       |                      v
-//  |                      +-------+-------+--------+   +---------------------+
-//  |                      | projectionInputFetcher |   | ProjectionExec.Next |
-//  |                      +------------------------+   +---------+-----------+
-//  |                              ^       ^                      |
-//  |                              |       |                      |
-//  |                           inputCh outputCh                  |
-//  |                              ^       ^                      |
-//  |                              |       |                      |
-//  +------------------------------+       +----------------------+
+//	 a. Returns this output to its parent
+//	 b. Returns the "output" resource to "projectionInputFetcher.outputCh"
 //
+//	+-----------+----------------------+--------------------------+
+//	|           |                      |                          |
+//	|  +--------+---------+   +--------+---------+       +--------+---------+
+//	|  | projectionWorker |   + projectionWorker |  ...  + projectionWorker |
+//	|  +------------------+   +------------------+       +------------------+
+//	|       ^       ^              ^       ^                  ^       ^
+//	|       |       |              |       |                  |       |
+//	|    inputCh outputCh       inputCh outputCh           inputCh outputCh
+//	|       ^       ^              ^       ^                  ^       ^
+//	|       |       |              |       |                  |       |
+//	|                              |       |
+//	|                              |       +----------------->outputCh
+//	|                              |       |                      |
+//	|                              |       |                      v
+//	|                      +-------+-------+--------+   +---------------------+
+//	|                      | projectionInputFetcher |   | ProjectionExec.Next |
+//	|                      +------------------------+   +---------+-----------+
+//	|                              ^       ^                      |
+//	|                              |       |                      |
+//	|                           inputCh outputCh                  |
+//	|                              ^       ^                      |
+//	|                              |       |                      |
+//	+------------------------------+       +----------------------+
 func (e *ProjectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
@@ -196,8 +202,9 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 	)
 	// Get the output from fetcher
 	// Hint: step III.3.1
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	output, ok = <-e.outputCh
 	if !ok {
 		return nil
 	}
@@ -308,13 +315,15 @@ type projectionInputFetcher struct {
 // run gets projectionInputFetcher's input and output resources from its
 // "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it fetches child's result into "input.chk" and:
-//   a. Dispatches this input to the worker specified in "input.targetWorker"
-//   b. Dispatches this output to the main thread: "ProjectionExec.Next"
-//   c. Dispatches this output to the worker specified in "input.targetWorker"
+//
+//	a. Dispatches this input to the worker specified in "input.targetWorker"
+//	b. Dispatches this output to the main thread: "ProjectionExec.Next"
+//	c. Dispatches this output to the worker specified in "input.targetWorker"
 //
 // It is finished and exited once:
-//   a. There is no more input from child.
-//   b. "ProjectionExec" close the "globalFinishCh"
+//
+//	a. There is no more input from child.
+//	b. "ProjectionExec" close the "globalFinishCh"
 func (f *projectionInputFetcher) run(ctx context.Context) {
 	var output *projectionOutput
 	defer func() {
@@ -340,9 +349,9 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		// Send processed output to global output
 		// Hint: step III.3.2
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
-
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		f.globalOutputCh <- output
 		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
 		err := Next(ctx, f.child, input.chk)
@@ -353,8 +362,12 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		// Give the input and output back to worker
 		// Hint: step III.3.2
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		// 将填充了数据的 projectionInput 发送到目标工作线程的 inputCh
+		targetWorker.inputCh <- input
+		// 将空闲的 projectionOutput 发送到目标工作线程的 outputCh，供工作线程存储计算结果
+		targetWorker.outputCh <- output
 	}
 }
 
@@ -377,11 +390,13 @@ type projectionWorker struct {
 // "inputCh" and "outputCh" channel, once the input and output resources are
 // abtained, it calculate the projection result use "input.chk" as the input
 // and "output.chk" as the output, once the calculation is done, it:
-//   a. Sends "nil" or error to "output.done" to mark this input is finished.
-//   b. Returns the "input" resource to "projectionInputFetcher.inputCh".
+//
+//	a. Sends "nil" or error to "output.done" to mark this input is finished.
+//	b. Returns the "input" resource to "projectionInputFetcher.inputCh".
 //
 // It is finished and exited once:
-//   a. "ProjectionExec" closes the "globalFinishCh".
+//
+//	a. "ProjectionExec" closes the "globalFinishCh".
 func (w *projectionWorker) run(ctx context.Context) {
 	var output *projectionOutput
 	defer func() {
@@ -397,16 +412,18 @@ func (w *projectionWorker) run(ctx context.Context) {
 		)
 		// Get input data
 		// Hint: step III.3.3
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		input = readProjectionInput(w.inputCh, w.globalFinishCh)
 		if input == nil {
 			return
 		}
 
 		// Get output data
 		// Hint: step III.3.3
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		output = readProjectionOutput(w.outputCh, w.globalFinishCh)
 		if output == nil {
 			return
 		}
@@ -422,8 +439,9 @@ func (w *projectionWorker) run(ctx context.Context) {
 
 		// Give the input channel back
 		// Hint: step III.3.3
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		w.inputGiveBackCh <- input
 	}
 }
 

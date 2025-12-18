@@ -537,6 +537,7 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
+// 这个函数会不停的循环从客户端读取请求数据并执行
 func (cc *clientConn) Run(ctx context.Context) {
 	const size = 4096
 	defer func() {
@@ -563,6 +564,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
+		// CompareAndSwapInt32 是一个原子操作，它会比较 cc.status 的当前值是否为 connStatusDispatching，
+		// 如果是，则将其更新为 connStatusReading，并返回 true。否则，不更新并返回 false
+		//如果接受到false，表示有其它goroutine修改了状态，直接返回执行defer
 		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) {
 			return
 		}
@@ -572,7 +576,9 @@ func (cc *clientConn) Run(ctx context.Context) {
 		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
 		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
+		//正式开始接收，但是在这之前重置内存，设置超时时间
 		data, err := cc.readPacket()
+		//各种错误处理
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
@@ -592,14 +598,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 			}
 			return
 		}
-
+		//换回状态
 		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
 			return
 		}
 
 		// Hint: step I.2
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		err = cc.dispatch(ctx, data)
+
 		if err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 
@@ -697,8 +705,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		}
 		var err error
 		// Hint: step I.2
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		//调用handleQuery
+		err = cc.handleQuery(ctx, dataStr)
 		return err
 	case mysql.ComPing:
 		return cc.writeOK()
@@ -827,8 +837,10 @@ func (cc *clientConn) writeEOF(serverStatus uint16) error {
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	var rss []ResultSet
 	// Hint: step I.3
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	//调用Execute
+	rss, err = cc.ctx.Execute(ctx, sql)
 
 	if err != nil {
 		return err
@@ -945,8 +957,10 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 		var err error
 		// Here server.tidbResultSet implements Next method.
 		// Hint: step I.4.4
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		err = rs.Next(ctx, req)
+
 		if err != nil {
 			return err
 		}

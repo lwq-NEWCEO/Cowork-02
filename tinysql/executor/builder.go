@@ -248,8 +248,9 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	}
 	var err error
 	// Hint: step II.1
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	err = ivs.initInsertColumns()
 	if err != nil {
 		b.err = err
 		return nil
@@ -559,8 +560,9 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Executor {
 	var childExec Executor
 	// Hint: step III.1
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	childExec = b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
 	}

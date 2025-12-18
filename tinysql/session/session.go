@@ -585,8 +585,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	)
 
 	// Hint: step I.3.1
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	stmtNodes, warns, err = s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
 		logutil.Logger(ctx).Warn("parse SQL failed",
@@ -614,8 +615,9 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		}
 		var stmt *executor.ExecStmt
 		// Hint: step I.3.2
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		stmt, err := compiler.Compile(ctx, stmtNode)
 		if stmt != nil {
 			logutil.Logger(ctx).Debug("stmt", zap.String("sql", stmt.Text))
 		}
@@ -632,8 +634,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		// Step3: Execute the physical plan.
 
 		// Hint: step I.3.3
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		//调用executeStatement
+		recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery)
 		if err != nil {
 			return nil, err
 		}

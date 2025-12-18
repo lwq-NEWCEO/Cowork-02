@@ -84,8 +84,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if txnCtx.History != nil {
 		var err error
 		// Hint: step I.5.1
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		err = e.ctx.NewTxn(ctx)
 		if err != nil {
 			return err
 		}
@@ -97,15 +98,18 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// Call ctx.Txn(true) to active pending txn.
 	var err error
 	// Hint: step I.5.1
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	_, err = e.ctx.Txn(true)
 	return err
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 	// Hint: step I.5.2
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	sessVars := e.ctx.GetSessionVars()
+	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 }
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
@@ -118,16 +122,18 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	)
 
 	// Hint: step I.5.3
-	// YOUR CODE HERE (lab4)
-	panic("YOUR CODE HERE")
+	// YOUR CODE HERE (lab4)DONE
+	//panic("YOUR CODE HERE")
+	txn, err = e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
 	if txn.Valid() {
 		sessVars.TxnCtx.ClearDelta()
 		// Hint: step I.5.3
-		// YOUR CODE HERE (lab4)
-		panic("YOUR CODE HERE")
+		// YOUR CODE HERE (lab4)DONE
+		//panic("YOUR CODE HERE")
+		err = txn.Rollback()
 		return err
 	}
 	return nil
