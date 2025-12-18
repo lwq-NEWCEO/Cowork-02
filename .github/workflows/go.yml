@@ -49,6 +49,15 @@ jobs:
         export LOG_LEVEL=fatal
         go test -v --count=1 --parallel=1 -p=1 -timeout 40m ./...
 
+    # 这是你之前提到的，预期会报错但希望跳过失败的测试
+    - name: Run Lab1P3b Test (Allow Failure)
+      run: |
+        cd tinykv
+        export TZ='Asia/Shanghai'
+        export LOG_LEVEL=fatal
+        go test -v --count=1 --parallel=1 -p=1 ./kv/test_raftstore -run Lab1P3b
+      continue-on-error: true # 即使此步骤失败，工作流也会继续
+
     - name: Test TinySQL
       run: |
         cd tinysql
