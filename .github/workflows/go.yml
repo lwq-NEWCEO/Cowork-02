@@ -1,0 +1,57 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Build TinyKV
+      run: |
+        cd tinykv
+        go mod tidy
+        make kv scheduler
+
+    - name: Build TinySQL
+      run: |
+        cd tinysql
+        go mod tidy
+        make server
+
+    - name: Test TinyKV
+      run: |
+        cd tinykv
+        export TZ='Asia/Shanghai'
+        export LOG_LEVEL=fatal
+        go test -v --count=1 --parallel=1 -p=1 -timeout 20m ./...
+
+    - name: Test TinySQL
+      run: |
+        cd tinysql
+        export log_level=error
+        export TZ='Asia/Shanghai'
+        go test -ldflags '-X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"' -cover ./... -check.timeout 4s
