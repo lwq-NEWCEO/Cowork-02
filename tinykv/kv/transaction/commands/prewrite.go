@@ -30,19 +30,22 @@ func NewPrewrite(request *kvrpcpb.PrewriteRequest) Prewrite {
 
 // PrepareWrites prepares the data to be written to the raftstore. The data flow is as follows.
 // The tinysql part:
-// 		user client -> insert/delete query -> tinysql server
-//      query -> parser -> planner -> executor -> the transaction memory buffer
-//		memory buffer -> kv muations -> kv client 2pc committer
-//		committer -> prewrite all the keys
-//		committer -> commit all the keys
-//		tinysql server -> respond to the user client
+//
+//			user client -> insert/delete query -> tinysql server
+//	     query -> parser -> planner -> executor -> the transaction memory buffer
+//			memory buffer -> kv muations -> kv client 2pc committer
+//			committer -> prewrite all the keys
+//			committer -> commit all the keys
+//			tinysql server -> respond to the user client
+//
 // The tinykv part:
-//		prewrite requests -> transaction mutations -> raft request
-//		raft req -> raft router -> raft worker -> peer propose raft req
-//		raft worker -> peer receive majority response for the propose raft req  -> peer raft committed entries
-//  	raft worker -> process committed entries -> send apply req to apply worker
-//		apply worker -> apply the correspond requests to storage(the state machine) -> callback
-//		callback -> signal the response action -> response to kv client
+//
+//			prewrite requests -> transaction mutations -> raft request
+//			raft req -> raft router -> raft worker -> peer propose raft req
+//			raft worker -> peer receive majority response for the propose raft req  -> peer raft committed entries
+//	 	raft worker -> process committed entries -> send apply req to apply worker
+//			apply worker -> apply the correspond requests to storage(the state machine) -> callback
+//			callback -> signal the response action -> response to kv client
 func (p *Prewrite) PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error) {
 	response := new(kvrpcpb.PrewriteResponse)
 
@@ -70,17 +73,68 @@ func (p *Prewrite) prewriteMutation(txn *mvcc.MvccTxn, mut *kvrpcpb.Mutation) (*
 	// Hint: Check the interafaces provided by `mvcc.MvccTxn`. The error type `kvrpcpb.WriteConflict` is used
 	//		 denote to write conflict error, try to set error information properly in the `kvrpcpb.KeyError`
 	//		 response.
-	panic("prewriteMutation is not implemented yet")
+	// panic("prewriteMutation is not implemented yet")
+	write, timestamp, err := txn.MostRecentWrite(key)
+	if err != nil {
+		log.Error("Inner Error at MostRecentWrite")
+		return nil, err
+	}
+	// 这里一定要检查write是否为nil，否则会出现错误。
+	if write != nil && txn.StartTS <= timestamp {
+		log.Info("Write Confilct")
+		return &kvrpcpb.KeyError{
+			Conflict: &kvrpcpb.WriteConflict{
+				StartTs:    txn.StartTS,
+				ConflictTs: timestamp,
+				Key:        key,
+				Primary:    p.request.PrimaryLock,
+			},
+		}, nil
+	}
 
 	// YOUR CODE HERE (lab2).
 	// Check if key is locked. Report key is locked error if lock does exist, note the key could be locked
 	// by this transaction already and the current prewrite request is stale.
-	panic("check lock in prewrite is not implemented yet")
+	// panic("check lock in prewrite is not implemented yet")
+	lock, err := txn.GetLock(key)
+	if err != nil {
+		log.Error("Inner Error at GetLock")
+		return nil, err
+	}
+
+	if lock != nil {
+		// 注意锁的timestamp和写入操作的timestamp的区别
+		if txn.StartTS == lock.Ts {
+			log.Debug("Key is locked for current transaction")
+			return nil, nil
+		} else {
+			log.Debug("Key is locked but not for current transaction - prewrite")
+			return &kvrpcpb.KeyError{
+				Locked: lock.Info(key),
+			}, nil
+		}
+	}
 
 	// YOUR CODE HERE (lab2).
 	// Write a lock and value.
 	// Hint: Check the interfaces provided by `mvccTxn.Txn`.
-	panic("lock record generation is not implemented yet")
+	// panic("lock record generation is not implemented yet")
+
+	// 将key上锁
+	txn.PutLock(key, &mvcc.Lock{
+		Primary: p.request.PrimaryLock,
+		Ts:      txn.StartTS,
+		Ttl:     p.request.LockTtl,
+		Kind:    mvcc.WriteKindFromProto(mut.GetOp()),
+	})
+
+	// 根据不同的操作类型，调用不同的接口进行prewrite操作
+	switch mut.GetOp() {
+	case kvrpcpb.Op_Put:
+		txn.PutValue(key, mut.Value)
+	case kvrpcpb.Op_Del:
+		txn.DeleteValue(key)
+	}
 
 	return nil, nil
 }

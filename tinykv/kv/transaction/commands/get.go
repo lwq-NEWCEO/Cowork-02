@@ -31,14 +31,34 @@ func (g *Get) Read(txn *mvcc.RoTxn) (interface{}, [][]byte, error) {
 		zap.String("key", hex.EncodeToString(key)))
 	response := new(kvrpcpb.GetResponse)
 
-	panic("kv get is not implemented yet")
+	// panic("kv get is not implemented yet")
 	// YOUR CODE HERE (lab2).
 	// Check for locks and their visibilities.
 	// Hint: Check the interfaces provided by `mvcc.RoTxn`.
+	lock, err := txn.GetLock(key)
+	if err != nil {
+		return response, nil, err
+	}
+	// 持有锁
+	if lock != nil && lock.IsLockedFor(key, txn.StartTS, response) {
+		response.Error = &kvrpcpb.KeyError{
+			Locked: lock.Info(key),
+		}
+		return response, nil, nil
+	}
 
 	// YOUR CODE HERE (lab2).
 	// Search writes for a committed value, set results in the response.
 	// Hint: Check the interfaces provided by `mvcc.RoTxn`.
+	value, err := txn.GetValue(key)
+	if err != nil {
+		return nil, nil, err
+	}
+	if value == nil {
+		response.NotFound = true
+	} else {
+		response.Value = value
+	}
 
 	return response, nil, nil
 }

@@ -1,83 +1,84 @@
-# LAB 2 The Transaction Layer - TinyKV Part
+# 实验二 事务层 - TinyKV 部分
 
-## The Design
+## 设计思路
 
-In lab 1 we've completed the raft log engine and the storage engine. With the raft log engine, the transaction logs are persisted "reliably" and the states could be restored
-after failover.In this chapter, we'll discuss the design and implementation of the **distributed transaction layer**. The raft log engine has provided the `Durability` and state recover insurances, the transaction layer needs to guarantee the `Atomicity` and the correctness with concurrency or `Isolation`. 
+在实验一中，我们完成了 Raft 日志引擎和存储引擎的开发。借助 Raft 日志引擎，事务日志能够被“可靠地”持久化，且故障转移后集群状态可以恢复。本章我们将探讨**分布式事务层**的设计与实现。Raft 日志引擎已提供了持久性（Durability）和状态恢复保障，而事务层需要保证原子性（Atomicity）以及并发场景下的正确性（即隔离性 Isolation）。
 
-The percolator protocol is used to guarantee the `Atomicity`, and to sequence concurrent transactions executions the global timestamp ordering is used. Based on these a strong isolation level which is usually called `Snapshot Isolation` or `Repeatable Read` could be provided for the client. The percolator protocol is implemented in both `tinysql` and `tinykv` servers, and the allocation of global transaction timestamp is done by the `tinyscheduler` server, and all the logical timestamp is monotonically increasing. In this lab we're going to implement the `tinykv` percolator part, or the distributed transaction participant part.
+我们采用 Percolator 协议来保证原子性，并通过全局时间戳排序来对并发事务的执行进行序列化。基于这些机制，我们可以为客户端提供一种强隔离级别（通常称为快照隔离 Snapshot Isolation 或可重复读 Repeatable Read）。Percolator 协议同时在 tinysql 和 tinykv 服务器中实现，全局事务时间戳的分配则由 tinyscheduler 服务器完成，所有逻辑时间戳均严格单调递增。本实验中，我们将实现 tinykv 侧的 Percolator 协议部分，即分布式事务的参与者逻辑。
 
-## Implement Percolator In TinyKV
+## 实现 TinyKV 中的 Percolator 协议
 
-The transaction processing flow is like this:
+事务处理流程如下：
 
 ![transaction_overview](imgs/transaction_overview.PNG)
 
-The user send write queries for example `Insert` to `tinysql` server, the queries are parsed and executed and the user data is transformed from rows into key value pairs. 
-Then the transaction module is responsible for committing the key value pairs into the storage engine. As different keys may live in different regions which could scatter in different 
-`tinykv` servers, the transaction engine must ensure the commit process will **succeed finally** or **do nothing at all**, and here comes the percolator protocol.
+用户向 tinysql 服务器发送写入类请求（例如 Insert），请求经过解析和执行后，用户数据从行格式转换为键值对格式。
+随后事务模块负责将这些键值对提交到存储引擎中。由于不同的键可能分布在不同的 Region（这些 Region 可能分散在不同的
+tinykv 服务器上），事务引擎必须保证提交过程最终**要么完全成功**，**要么完全不生效**——这正是 Percolator 协议要解决的核心问题。
 
-Consider commit a distributed transaction with multiple keys.First, one of the to be committed keys will be chosen to act as the **`Primary Key`**, then the transaction status is only determined by the commit status of this `Primary Key`. In other words, the transaction is considered successfully committed only if the `Primary Key` is committed successfully. The commit process is divided into two phases, the first is `Prewrite` and the second is `Commit`.
+考虑一个包含多个键的分布式事务提交过程：首先会从待提交的键中选择一个作为**主键（Primary Key）**，事务的最终状态仅由该主键的提交状态决定。换句话说，只有当主键提交成功时，整个事务才被视为提交成功。提交过程分为两个阶段：预写（Prewrite）阶段和提交（Commit）阶段。
 
-### Prewrite Phase
+### 预写阶段（Prewrite Phase）
 
-After the key value preparations the transaction comes into the `Prewrite` phase, in this stage all the keys will be prewritted in different `tinykv`
-servers containing different region leaders. Each `Prewrite` request will be processed by a `tinykv` server and the `Prewrite Lock` will be put into the `lock column family` for each key in the storage engine. The commit process will fail immediately if any of these prewrite process has failed, any left prewrite locks will be cleaned up afterwards.
+键值对准备完成后，事务进入预写阶段。在此阶段，所有待提交的键会被预写到对应 Region Leader 所在的不同 tinykv 服务器上。每个预写请求由对应的 tinykv 服务器处理，并为每个键在存储引擎的锁列族（lock column family）中写入预写锁（Prewrite Lock）。如果任意一个键的预写过程失败，整个提交流程会立即终止，同时清理已写入的预写锁。
 
-### Commit Phase
+### 提交阶段（Commit Phase）
 
-If all of the prewrite processing are successful, the transaction goes into `Commit` phase, in this stage the `Primary Key` will be committed firstly. The operations of `Commit`
-processing are put a `Write Record` into the `write column family` in the storage engine and unlock the `Prewrite Lock` in the `lock column family`. If the commit operation of the primary key has succeed then the transaction is considered committed and the success response will be sent back to the client. All the other keys which are called `Secondary Keys` will be committed **asynchronously** in the background tasks.
+若所有键的预写过程均成功，事务进入提交阶段。此阶段首先提交主键：在存储引擎的写列族（write column family）中写入一条写记录（Write Record），并释放锁列族中主键对应的预写锁。一旦主键提交成功，整个事务即被视为提交完成，并向客户端返回成功响应。其余的键（称为次键 Secondary Keys）则在后台异步提交。
 
-In the common path these two phases are enough, but not doing **crash recovery**. In the distributed environment failures could happen anywhere, for example the `tinysql` servers could fail before the finish of the `Two Phase Commit` and so are the `tinykv` servers. After the new region leader is elected and started to process requests, how should we **recover the unfinished transactions and ensure the correctness**?
+上述流程覆盖了正常场景，但未考虑**故障恢复**。在分布式环境中，故障可能发生在任意节点：例如 tinysql 服务器可能在两阶段提交完成前崩溃，tinykv 服务器也可能出现故障。当新的 Region Leader 被选举出来并开始处理请求时，我们该如何**恢复未完成的事务并保证数据正确性**？
 
-### Rollback Record
+### 回滚记录（Rollback Record）
 
-Once the transaction is decided to fail, its left locks should be cleaned up and a rollback record will be put into storage engine to prevent possible future prewrite or commit(consider the network delay, etc). So if the rollback record is put on the primary key of this transaction, the transaction status is decided to be `Rolled Back` and it
-will never commit and must fail.
+一旦事务确定失败，其遗留的锁需要被清理，同时在存储引擎中写入一条回滚记录，以防止未来可能的预写或提交操作（考虑到网络延迟等因素）。因此，若事务主键上存在回滚记录，则该事务的状态被判定为“已回滚”，且永远无法提交，最终必然失败。
 
-### Check The Transaction Status
+### 检查事务状态（Check The Transaction Status）
 
-As mentioned above the final status of a transaction is determined only by the status of the `Primary Key` or `Primary Lock`. So if some transaction status could not be decided, it's needed to check the status of its `Primary Key` or `Primary Lock`. If there is committed or rollback record for the primary key, then we could safely say the transaction is already committed or rolled back. If the primary lock still exists and it's not expired yet, then the transaction commit is possible still ongoing. If there is no lock record and commit/rollback record, the transaction status is uncertain we could choose to wait or to write a rollback record to prevent the latter commit then it's decided to be rolled back. Each `Prewrite Lock` in the two phase commit will have a `Time To Live` field, if its ttl has expired then the lock could be rolled back by concurrent
-commands like `CheckTxnStatus`, after that this transaction must fail finally.
+如前所述，事务的最终状态仅由其主键（或主键锁）的状态决定。因此，当某个事务的状态无法确定时，需要检查其主键（或主键锁）的状态：
+- 若主键存在提交记录或回滚记录，则可明确判定事务已提交或已回滚；
+- 若主键锁仍存在且未过期，则事务可能仍在提交过程中；
+- 若既无锁记录，也无提交/回滚记录，则事务状态不确定——可选择等待，或写入回滚记录阻止后续提交，从而将事务判定为回滚。
 
-### Process Conflicts And Do Recovery
+两阶段提交中的每个预写锁都包含一个存活时间（Time To Live，TTL）字段。若锁的 TTL 过期，则该锁可被 `CheckTxnStatus` 等并发命令回滚，此后该事务最终必然失败。
 
-Different transaction coordinators could be located in different **tinysql** servers, the read and write requests may conflict with each other. Consider the situation that a transaction `txn1` has prewrited a lock on key `k1`, another read transaction named `txn2` is trying to read `k1`, how should the `txn2` deal with it?
+### 处理冲突与故障恢复（Process Conflicts And Do Recovery）
 
-The read and write requests could not continue as the lock record has blocked them, there are serveral possibilities:
-- The transaction this lock belongs to is already committed, it's ok to commit this lock too, then the blocked requests could continue on this key.
-- The transaction this lock belongs to is already rolled back, it's ok to rollback this lock, then the blocked requests could continue on this key.
-- The transaction this lock belongs to is still ongoing, the blocked requests has to wait for the blocking transaction to finish.
+不同的事务协调器可能部署在不同的 tinysql 服务器上，读写请求之间可能发生冲突。例如：事务 txn1 已为键 k1 写入预写锁，而另一个读事务 txn2 试图读取 k1，此时 txn2 应如何处理？
 
-These conflict processing is called `Resolve` in `tinysql/tinykv` clusters. Once the requets are blocked by a prewrite lock of another transaction, the resolve process will be used to help decide the status of the lock and help commit or rollback this lock, so that the requests could continue. The `Resolve` operations implicitly help doing the **transaction recovery**. Suppose a situation that the transaction scheduler finishes prewrite locks then the `tinysql` server has crashed and these left locks will be resolved
-by the concurrent transaction requests from other `tinysql` servers.
+由于锁记录的存在，读写请求无法继续执行，存在以下几种可能：
+- 该锁所属的事务已提交：可直接提交该锁，阻塞的请求即可继续处理该键；
+- 该锁所属的事务已回滚：可直接回滚该锁，阻塞的请求即可继续处理该键；
+- 该锁所属的事务仍在执行中：阻塞的请求需等待持有锁的事务完成。
 
+这种冲突处理逻辑在 tinysql/tinykv 集群中被称为“解析（Resolve）”。当请求被其他事务的预写锁阻塞时，解析流程会被触发，用于判定锁的状态并协助提交或回滚该锁，使被阻塞的请求得以继续执行。解析操作隐式地完成了**事务恢复**：例如，若事务协调器完成预写锁写入后 tinysql 服务器崩溃，这些遗留的锁会被来自其他 tinysql 服务器的并发事务请求解析处理。
 
-## LAB2
+## 实验二任务
 
-We're going to implement the above interface and their processing logic in tinykv server.
+我们需要在 tinykv 服务器中实现上述接口及其处理逻辑。
 
-### The Code
+### 代码结构
 
-#### The `Command` Abstraction
+#### 命令抽象（Command Abstraction）
 
-In `kv/transaction/commands/command.go`, there is the interface for all the transaction commands.
+在 `kv/transaction/commands/command.go` 中定义了所有事务命令的接口：
 
-```
-// Command is an abstraction which covers the process from receiving a request from gRPC to returning a response.
+```go
+// Command 是一个抽象接口，涵盖了从接收 gRPC 请求到返回响应的完整处理流程。
 type Command interface {
 	Context() *kvrpcpb.Context
 	StartTs() uint64
-	// WillWrite returns a list of all keys that might be written by this command. Return nil if the command is readonly.
+	// WillWrite 返回该命令可能写入的所有键列表。若为只读命令则返回 nil。
 	WillWrite() [][]byte
-	// Read executes a readonly part of the command. Only called if WillWrite returns nil. If the command needs to write
-	// to the DB it should return a non-nil set of keys that the command will write.
+	// Read 执行命令的只读逻辑。仅在 WillWrite 返回 nil 时调用。
+	// 若命令需要写入数据库，则应返回非空的待写入键列表。
 	Read(txn *mvcc.RoTxn) (interface{}, [][]byte, error)
-	// PrepareWrites is for building writes in an mvcc transaction. Commands can also make non-transactional
-	// reads and writes using txn. Returning without modifying txn means that no transaction will be executed.
+	// PrepareWrites 用于在 MVCC 事务中构建写入操作。
+	// 命令也可通过 txn 执行非事务性的读写操作。
+	// 若返回时未修改 txn，则表示无需执行事务操作。
 	PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error)
 }
+
+
 ```
 
 The `WillWrite` generate the write content need to be written for this request, the `Read` will execute the read requests needed by this command. `PrepareWrites` is used

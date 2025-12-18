@@ -149,7 +149,6 @@ type Executor interface {
 	Next(ctx context.Context, req *chunk.Chunk) error
 	Close() error
 	Schema() *expression.Schema
-	type Executor interface
 }
 
 // Next is a wrapper function on e.Next(), it handles some common codes.

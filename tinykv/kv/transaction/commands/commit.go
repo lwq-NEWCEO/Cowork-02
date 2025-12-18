@@ -31,7 +31,13 @@ func (c *Commit) PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error) {
 	// YOUR CODE HERE (lab2).
 	// Check if the commitTs is invalid, the commitTs must be greater than the transaction startTs. If not
 	// report unexpected error.
-	panic("PrepareWrites is not implemented for commit command")
+	// panic("PrepareWrites is not implemented for commit command")
+	if commitTs <= txn.StartTS {
+		log.Error("CommitTs is invalid", zap.Uint64("startTs", txn.StartTS), zap.Uint64("commitTs", commitTs))
+		return &kvrpcpb.KeyError{
+			Retryable: "Invalid timestamp",
+		}, nil
+	}
 
 	response := new(kvrpcpb.CommitResponse)
 
@@ -53,7 +59,7 @@ func commitKey(key []byte, commitTs uint64, txn *mvcc.MvccTxn, response interfac
 	}
 
 	// If there is no correspond lock for this transaction.
-	panic("commitKey is not implemented yet")
+	// panic("commitKey is not implemented yet")
 	log.Debug("commitKey", zap.Uint64("startTS", txn.StartTS),
 		zap.Uint64("commitTs", commitTs),
 		zap.String("key", hex.EncodeToString(key)))
@@ -62,6 +68,38 @@ func commitKey(key []byte, commitTs uint64, txn *mvcc.MvccTxn, response interfac
 		// Key is locked by a different transaction, or there is no lock on the key. It's needed to
 		// check the commit/rollback record for this key, if nothing is found report lock not found
 		// error. Also the commit request could be stale that it's already committed or rolled back.
+		write, _, err := txn.MostRecentWrite(key)
+		if err != nil {
+			log.Error("Inner Error at MostRecentWrite")
+			return nil, err
+		}
+		if write != nil {
+			if write.StartTS != txn.StartTS {
+				// 和prewrite一样
+				log.Error("Key is locked but not for current transaction - commit")
+				return &kvrpcpb.KeyError{
+					Conflict: &kvrpcpb.WriteConflict{
+						StartTs:    txn.StartTS,
+						ConflictTs: write.StartTS,
+						Key:        key,
+						Primary:    lock.Primary,
+					},
+				}, nil
+			} else {
+				if write.Kind == mvcc.WriteKindRollback {
+					// 这里需要通过反射把它包装成一个response，否则在回滚操作时无法接收到锁信息
+					// 最终会导致NPE
+					respValue := reflect.ValueOf(response)
+
+					keyError := &kvrpcpb.KeyError{Retryable: fmt.Sprintf("The transaction with stast_ts %v has been rolled back ", txn.StartTS)}
+					reflect.Indirect(respValue).FieldByName("Error").Set(reflect.ValueOf(keyError))
+					return response, nil
+				} else {
+					log.Debug("Key is committed,current txn is stale")
+					return nil, nil
+				}
+			}
+		}
 
 		respValue := reflect.ValueOf(response)
 		keyError := &kvrpcpb.KeyError{Retryable: fmt.Sprintf("lock not found for key %v", key)}

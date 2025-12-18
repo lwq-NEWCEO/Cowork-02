@@ -34,11 +34,27 @@ func (rl *ResolveLock) PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error) {
 		zap.Uint64("lockTS", txn.StartTS),
 		zap.Int("number", len(rl.keyLocks)),
 		zap.Uint64("commit_ts", commitTs))
-	panic("ResolveLock is not implemented yet")
+	//panic("ResolveLock is not implemented yet")
 	for _, kl := range rl.keyLocks {
 		// YOUR CODE HERE (lab2).
 		// Try to commit the key if the transaction is committed already, or try to rollback the key if it's not.
 		// The `commitKey` and `rollbackKey` functions could be useful.
+		log.Debug("Check key status.")
+		if commitTs != 0 {
+			log.Debug("Commit key", zap.String("key", hex.EncodeToString(kl.Key)))
+			_, err := commitKey(kl.Key, commitTs, txn, response)
+			if err != nil {
+				log.Error("Inner Error at CommitKey")
+				return nil, err
+			}
+		} else {
+			log.Debug("Rollback key", zap.String("key", hex.EncodeToString(kl.Key)))
+			_, err := rollbackKey(kl.Key, txn, response)
+			if err != nil {
+				log.Error("Inner Error at RollbackKey")
+				return nil, err
+			}
+		}
 		log.Debug("resolve key", zap.String("key", hex.EncodeToString(kl.Key)))
 	}
 

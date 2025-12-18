@@ -31,7 +31,7 @@ func (c *CheckTxnStatus) PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	panic("CheckTxnStatus is not implemented yet")
+	// panic("CheckTxnStatus is not implemented yet")
 	if lock != nil && lock.Ts == txn.StartTS {
 		if physical(lock.Ts)+lock.Ttl < physical(c.request.CurrentTs) {
 			// YOUR CODE HERE (lab2).
@@ -43,6 +43,13 @@ func (c *CheckTxnStatus) PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error) {
 				zap.Uint64("txn.StartTS", txn.StartTS),
 				zap.Uint64("currentTS", c.request.CurrentTs),
 				zap.Uint64("physical(currentTS)", physical(c.request.CurrentTs)))
+
+			txn.PutWrite(key, txn.StartTS, &mvcc.Write{StartTS: txn.StartTS, Kind: mvcc.WriteKindRollback})
+			txn.DeleteLock(key)
+			if lock.Kind == mvcc.WriteKindPut {
+				txn.DeleteValue(key)
+			}
+			response.Action = kvrpcpb.Action_TTLExpireRollback // 设置响应的操作类型，表明锁已过期，进行了回滚操作
 		} else {
 			// Lock has not expired, leave it alone.
 			response.Action = kvrpcpb.Action_NoAction
@@ -56,7 +63,7 @@ func (c *CheckTxnStatus) PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	panic("CheckTxnStatus is not implemented yet")
+	// panic("CheckTxnStatus is not implemented yet")
 	if existingWrite == nil {
 		// YOUR CODE HERE (lab2).
 		// The lock never existed, it's still needed to put a rollback record on it so that
@@ -64,6 +71,8 @@ func (c *CheckTxnStatus) PrepareWrites(txn *mvcc.MvccTxn) (interface{}, error) {
 		// Note try to set correct `response.Action`,
 		// the action types could be found in kvrpcpb.Action_xxx.
 
+		txn.PutWrite(key, txn.StartTS, &mvcc.Write{StartTS: txn.StartTS, Kind: mvcc.WriteKindRollback})
+		response.Action = kvrpcpb.Action_LockNotExistRollback
 		return response, nil
 	}
 
