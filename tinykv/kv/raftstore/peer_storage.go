@@ -271,6 +271,7 @@ func (ps *PeerStorage) Append(entries []eraftpb.Entry, raftWB *engine_util.Write
 		//       functions could be useful.
 		key := meta.RaftLogKey(ps.region.GetId(), entry.Index)
 		raftWB.SetMeta(key, &entry)
+
 		log.Debug(fmt.Sprintf("entry=%v", entry))
 	}
 

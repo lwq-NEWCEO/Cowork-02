@@ -269,9 +269,9 @@ func (d *peerMsgHandler) validateRaftMessage(msg *rspb.RaftMessage) bool {
 	return true
 }
 
-/// Checks if the message is sent to the correct peer.
-///
-/// Returns true means that the message can be dropped silently.
+// / Checks if the message is sent to the correct peer.
+// /
+// / Returns true means that the message can be dropped silently.
 func (d *peerMsgHandler) checkMessage(msg *rspb.RaftMessage) bool {
 	fromEpoch := msg.GetRegionEpoch()
 	isVoteMsg := util.IsVoteMessage(msg.Message)
@@ -619,7 +619,7 @@ func (d *peerMsgHandler) preProposeRaftCommand(req *raft_cmdpb.RaftCmdRequest) e
 
 func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *message.Callback) {
 	// panic("not implemented yet")
-	// YOUR CODE HERE (lab1).
+	// YOUR CODE HERE (DONE).
 	// Hint1: do `preProposeRaftCommand` check for the command, if the check fails, need to execute the
 	// callback function and return the error results. `ErrResp` is useful to generate error response.
 	err := d.preProposeRaftCommand(msg)
@@ -627,6 +627,7 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		cb.Done(ErrResp(err))
 		return
 	}
+
 	// Hint2: Check if peer is stopped already, if so notify the callback that the region is removed, check
 	// the `destroy` function for related utilities. `NotifyReqRegionRemoved` is useful to generate error response.
 	if d.stopped {
@@ -636,18 +637,20 @@ func (d *peerMsgHandler) proposeRaftCommand(msg *raft_cmdpb.RaftCmdRequest, cb *
 		}
 		return
 	}
+
 	// Hint3: Bind the possible response with term then do the real requests propose using the `Propose` function.
 	// Note:
 	// The peer that is being checked is a leader. It might step down to be a follower later. It
 	// doesn't matter whether the peer is a leader or not. If it's not a leader, the proposing
 	// command log entry can't be committed. There are some useful information in the `ctx` of the `peerMsgHandler`.
+
 	// 构造Propose
 	term := d.Term()
-	resp := raft_cmdpb.RaftCmdResponse{}
-	BindRespTerm(&resp, term)
+	resp := newCmdResp()
+	BindRespTerm(resp, term)
 
 	// 提交Propose
-	d.Propose(d.ctx.engine.Kv, d.ctx.cfg, cb, msg, &resp)
+	d.Propose(d.ctx.engine.Kv, d.ctx.cfg, cb, msg, resp)
 }
 
 func (d *peerMsgHandler) findSiblingRegion() (result *metapb.Region) {

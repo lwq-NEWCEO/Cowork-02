@@ -1,59 +1,62 @@
-# LAB 1 存储与日志层
+# LAB 1 The Storage And Log Layer.
 
-## 设计
+## The Design
 
-在本章中，我们将讨论分布式事务数据库系统的设计。架构概览如下：
+In this chapter, we'll discuss the design of our distributed transactional database system. The overview of the architecture is:
 
 ![overview](imgs/overview.png)
 
-众所周知，事务系统必须确保 **`ACID`** 属性在大多数情况下都能得到保证。如何确保这些属性？
+As we know, a transaction system must ensure that properties of **`ACID`** will be held in most situations. How to ensure them?
 
-### 首先确保 `持久性`
+### Ensure `Durability` first
 
-在分布式环境中，为了满足**可用性**和**可靠性**要求，关键是提高**事务日志**的可用性和可靠性。正如 `AWS Aurora` 所说的那样，“**日志即数据库**”，如果日志能够可靠地持久化，那么**`持久性`**就能得到保证。
+In the distributed environment, to meet the **availability** and **reliability** requirements, the key point is to improve them for the **transaction logs**. Like what `AWS Aurora` has said "**log is the database**", if the logs are persisted reliably, then the **`Durability`** will be held.
 
-在像 MySQL 这样的单机数据库中，这是通过在将结果返回给客户端之前，将 InnoDB 重做日志持久化到磁盘来实现的。显然，如果单节点发生故障，日志可能会丢失。为了更可靠地持久化日志，需要副本，因此引入了分布式系统。
-困难之处在于如何确保不同副本中的日志完全相同。通常，我们将使用一些共识算法将日志复制到不同的节点，`CAP` 理论告诉我们，如果使用更多的副本，可用性将会提高，而丢失日志的可能性将会降低。 
+In a single machine database like MySQL, it's achieved by persisting InnoDB redo logs to the disk before return results to the client, obviously the logs could be lost if the single node fails. To persist the logs more reliably, replicas are needed so the distributed system
+is introduced. The difficult thing is how to make sure the logs are exactly the same in different replicas. Often we will use some consensus algorithms to replicate logs to different nodes, the `CAP` theory tells us the availability will increase and the possibility of losing logs becomes lower if more replicas are used. 
 
-在 `tinykv` 的架构中，`Raft` 被用作共识算法，用于将日志复制到副本节点，代码模块称为 `raftStore`。 
+In the architecture of `tinykv`, `Raft` is used as the consensus algorithm to replicate logs to replica nodes, and the code module is called `raftStore`. 
 
 ![raft](imgs/raft.png)
 
-`raftStore` 入请求都将由它处理。存储引擎的难点在于使其尽可能快，同时减少所需的资源将负责将事务日志或提交日志复制到不同的节点。在大多数复制成员成功接受日志后，它们被认为是 `已提交` 的，并且可以响应客户端继续写入过程。这保证了一旦事务被提交，那么它的所有写入内容至少在大多数节点上都持久化到磁盘，因此事务 `ACID` 的 **`持久性`** 在分布式环境中得到保证。
+`raftStore` will be responsible to replicate transaction logs or commit logs to different nodes, after the majority of the replicating members accept the logs successfully,
+they are considered `committed` and it's ok to respond to the client the write process could continue. This is the guarantee that once the transaction is committed, then all its write content is persisted to the disk at least on the majority nodes, so the **`Durability`** of transaction `ACID` is held in distributed environments.
 
-仅有提交日志，无法提供读取和写入请求服务。存储引擎用于应用或重放这些日志，然后它将服务这些请求。
-在 TiKV 中，[rocksdb](https://docs.pingcap.com/zh/tidb/stable/rocksdb-overview) 用于构建存储引擎层。在 tinykv 中，使用了类似的存储引擎 [badger](https://github.com/dgraph-io/badger)，所有读取和写。
+With only the commit logs, read and write requests could not be served. The storage engine is used to apply or replay these logs and then it will serve these requests.
+In TiKV, [rocksdb](https://docs.pingcap.com/zh/tidb/stable/rocksdb-overview) is used to build the storage engine layer. In tinykv, a similar storage engine [badger](https://github.com/dgraph-io/badger) is used, all the read and write requests will be processed by it. The difficult thing for the storage engine is to make itself as fast as possible while reducing the resources it needs.
 
 
-### 如何实现 `原子性`
+### How to make it `Atomic`
 
-在分布式事务架构的传统解决方案中，使用诸如 `两阶段提交` 之类的特殊协议来确保事务处理的原子性。问题是如何确保事务处理在故障转移后能够**正确**地继续进行，因为在传统的 2PC 处理中，如果协调器不可用，整个过程将会停滞。
+In the traditional solution of 
+distributed transaction architectures, a special protocol such as `two-phase commit` is used to make sure the transaction processing is atomic. The problem is how to ensure that the transactional progress could continue **correctly** after failover, as in the traditional 2PC processing the whole process will get stuck if the coordinator is not available.
 
-在 `tinykv` 中，`raftStore` 已经确保日志将被复制到副本，并且故障转移更容易，因为如果 raft 组的大多数节点存活，事务状态始终可以恢复。也就是说，无论协调器或参与者是否发生故障，2PC 处理都可以继续，因为新当选的领导者将始终具有相同的事务状态。
+In `tinykv` the `raftStore` has ensured logs will be replicated to replicas, and the failover is much easier that transaction states could always be restored if majority nodes of the raft group survive. That is to say the 2PC processing could continue as the newly elected leaders will always have same transaction states, no matter the coordinator or the participant fails.
 
-在 tinysql/tinykv 中，[percolator](https://research.google/pubs/pub36726/) 协议被用作分布式事务协议，它类似于传统的 2PC 方式，但仍然存在一些差异。主要的区别之一是，协调器或调度器不需要在本地持久化事务状态，所有事务状态都持久化在参与者节点中。在 tinysql/tinykv 集群中，`tinysql` 节点充当事务协调器，而所有 `tinykv` 节点都是参与者。在接下来的实验中，我们将基于 `tinysql` 和 `tinykv` 的现有框架来实现 percolator 协议。
+In tinysql/tinykv, the [percolator](https://research.google/pubs/pub36726/) protocol is used as the distributed transaction protocol, it's like the traditional 2PC way but still have some differences. One of the main differences is that the coordinator or the scheduler does not need to persist the transaction states locally, all the transaction states are persisted in the participant nodes. In tinysql/tinykv cluster, the `tinysql` nodes work as the transaction coordinators and all the `tinykv` nodes are participants.In the next labs, we'll go to implement the percolator protocol based on the existing framework of `tinysql` and `tinykv`.
 
-### 并发与隔离
+### Concurrency And Isolation
 
-为了获得更好的性能，事务引擎需要处理许多并发请求，如何并发处理它们并确保结果合理？隔离级别被定义来描述性能和并发约束之间的权衡。如果您不熟悉事务隔离级别和相关概念，可以参考[文档](https://pingcap.com/blog-cn/take-you-through-the-isolation-level-of-tidb-1)。
+To get better performance, a transaction engine will need to process many concurrent requests, how to process them concurrently and ensure the results are reasonable? Isolation levels are defined to describe the tradeoff between performance and concurrency constraints, if you are not familiar with the transaction isolation levels and related concepts, the [document](https://pingcap.com/blog-cn/take-you-through-the-isolation-level-of-tidb-1) could be referred.
 
-在 tinysql/tinykv 集群中，我们将实现一种强隔离约束，称为“快照隔离”或“可重复读”。在分布式环境中，使用全局时间戳排序分配器对所有并发事务进行排序，并且每个事务将具有唯一的 `start_ts`，这意味着它使用的快照。此时间戳排序分配器位于 tinysql/tinykv 集群中的 `tinyscheudler` 服务器中。要了解有关集群的调度服务的更多信息，此[文档](https://pingcap.com/blog-cn/placement-driver)可能会有所帮助。
+In tinysql/tinykv cluster, we're going to implement a strong isolation constraint which is called `snapshot isolation` or `repeatable read`. In the distributed environment,
+a global timestamp ordering allocator is used to sequence all the concurrent transactions, and each transaction will have a unique `start_ts` which means the snapshot it uses, this timestamp ordering allocator is in `tinyscheudler` server in the tinysql/tinykv cluster. To learn more about the scheduler service of the cluster, this [document](https://pingcap.com/blog-cn/placement-driver) could be helpful.
 
-### 支持 SQL 事务
+### Support SQL Transaction
 
-为了构建一个完整的分布式事务数据库，我们将为事务语法添加 SQL 支持，例如 `BEGIN`、`COMMIT`、`ROLLBACK`。通常使用的写入语句（如 `INSERT`、`DELETE`）将被实现，以使用分布式事务将数据写入存储层。`SELECT` 结果也将保留上述部分中描述的事务属性。事务层能够正确处理读写和写写冲突。
+To build a complete distributed transaction database, we are going to add SQL support for the transaction grammars like `BEGIN`, `COMMIT`, `ROLLBACK`. The generally used write statements like `INSERT`, `DELETE` will be implemented to write data using distributed transactions into the storage layer. The `SELECT` results will also keep the transaction properties described in the above sections. And the transaction layer is able to handle read-write and write-write conflicts correctly.
 
 ## LAB1
 
-在本实验中，我们将熟悉 `tinykv` 中的整个框架，并完成 `raftStore` 和 `storeEngine` 的实现。如上所述，`raftStore` 将处理所有提交日志，并将它们复制到不同 raft 组中的不同节点。在 tinykv 中，一个 raft 组被命名为 `Region`，每个区域都有其服务的键范围。引导阶段之后将有一个区域，并且该区域将来可能会拆分为更多区域，然后 `raftStore` 中不同的 raft 组（或我们称之为“区域”）将负责不同的键范围，并且 `multi-raft` 或 `multiple-regions` 将独立处理客户端请求。现在，您可以简单地认为只有一个 raft 组或一个区域正在处理请求。
-此[文档](https://docs.pingcap.com/zh/tidb/stable/tikv-overview)可能有助于理解 `raftStore` 架构。
+In this lab, we are going to get familiar with the whole framework in `tinykv`, and complete the implementation of the `raftStore` and `storeEngine`. As described above, the `raftStore` will process all the commit logs and replicate them to different nodes within different raft groups. In tinykv, a raft group is named `Region`, every region has its key ranges it will serve. There will be one region after the bootstrap stage, and the region could be split into more regions in the future, then different raft groups or what we call `regions` in the `raftStore` will be responsible for different key ranges, and `multi-raft` or `multiple-regions` will process client requests independently. By now you could simply regard that there is only one raft group or one region processing requests.
+This [document](https://docs.pingcap.com/zh/tidb/stable/tikv-overview) could be helpful to understand the `raftStore` architecture.
 
 
-### 代码
+### The Code
 
-#### `raftStore` 抽象
+#### The `raftStore` abstraction
 
-在 `kv/storage/storage.go` 中，存在 `raftStore` 的接口或抽象。
+In `kv/storage/storage.go`, there is the interface or abstractions of the `raftStore`.
 ```
 // Storage represents the internal-facing server part of TinyKV, it handles sending and receiving from other
 // TinyKV nodes. As part of that responsibility, it also reads and writes data to disk (or semi-permanent memory).
@@ -65,87 +68,88 @@ type Storage interface {
 	Client() scheduler_client.Client
 }
 ```
-`Write` 接口将被事务引擎用于持久化写入日志。如果它返回 ok，则表示日志已成功持久化并由存储引擎应用。这里需要两个步骤：首先是在大多数节点上持久化日志，其次是在存储引擎中应用这些写入。
+The `Write` interface will be used by the transaction engine to persist the write logs, if it returns ok then the logs have been successfully persisted and applied by the storage engine. Here two steps are needed, the first is to persist the logs on the majority nodes and the second is to apply these writes in the storage engine.
 
-为了简单起见，我们将跳过 raft 日志共识步骤，首先只考虑单机存储引擎。在此之后，我们将熟悉存储引擎接口，这非常有用，因为 `raftStore` 也将使用相同的存储引擎来持久化日志。
+To make it simple, we will skip the raft log consensus step and just consider a single machine storage engine first. After this we will get familiar with the storage engine interfaces, that's very useful as the `raftStore` will use the same storage engine to persist logs too.
 
-#### 实现 `StandAloneStorage` 的核心接口
+#### Implement The Core Interfaces of `StandAloneStorage`
 
-尝试实现 `kv/storage/standalone_storage/standalone_storage.go` 中缺失的代码，这些代码部分标记为：
+Try to implement the missing code in `kv/storage/standalone_storage/standalone_storage.go`, these code parts are marked with:
 
 `// YOUR CODE HERE (lab1).`
 
-完成这些部分后，运行 `make lab1P0` 命令来检查是否所有测试用例都通过。需要注意的事项：
-- 由于 [badger](https://github.com/dgraph-io/badger) 被用作存储引擎，因此可以在其文档和存储库中找到常见的用法。
-- `badger` 存储引擎不支持 [`列族`](https://en.wikipedia.org/wiki/Standard_column_family)。`percolator` 事务模型需要列族，在 `tinykv` 中，列族相关的实用程序已经包装在 `kv/util/engine_util/util.go` 中。当处理 `storage.Modify` 时，写入存储引擎的键应该使用 `KeyWithCF` 函数进行编码，考虑到其预期的列族。在 `tinykv` 中，有两种类型的 `Modify`，请查看 `kv/storage/modify.go` 以获取更多信息。
-- `scheduler_client.Client` 不会被 `standAloneServer` 使用，因此可以跳过。
-- 可以考虑 `badger` 提供的 `txn` 功能和相关的读/写接口。查看 `BadgerReader` 以获取更多信息。
-- 某些测试用例可能有助于理解存储接口的用法。
+After finishing these parts, run `make lab1P0` command to check if all the test cases are passed. Things to note:
+- As the [badger](https://github.com/dgraph-io/badger) is used as the storage engine, the common usages could be found in its documents and repository.
+- The `badger` storage engine does not support [`column family`](https://en.wikipedia.org/wiki/Standard_column_family). The column families are needed for the `percolator` transaction model, in `tinykv` the column family related utilities are already wrapped in `kv/util/engine_util/util.go`. When process the `storage.Modify`, the key written into
+the storage engine should be encoded using `KeyWithCF` function considering its expected column family. In `tinykv` there are two types of `Modify`, check the `kv/storage/modify.go` for more information.
+- The `scheduler_client.Client` will not be used by the`standAloneServer`, so it could be skipped.
+- The `txn` features and related read/write interfaces provided by `badger` could be considered. Check about the `BadgerReader` for more information.
+- Some test cases could be useful to understand the usages of the storage interface.
 
 
-#### 实现 `RaftStorage` 的核心接口
+#### Implement The Core Interfaces of `RaftStorage`
 
-在 `StandAloneStorage` 中，日志引擎层被忽略，所有读取和写入请求都由存储引擎直接处理。在本章中，我们将尝试构建如上所述的日志引擎。在 `standalone_storage` 中，单个 badger 实例被用作存储引擎。
-在 `raftStore` 中将有两个 `badger` 实例，第一个用作存储引擎或状态机，就像 `standalone_storage` 一样，第二个将由 `raftStore` 中的日志引擎用于持久化 raft 日志。在 `kv/util/engine_util/engines.go` 中，您可以找到 `Kv` 和 `Raft` 结构成员，`Kv` 实例用作存储引擎，`Raft` 由 raft 日志引擎使用。
+In the `StandAloneStorage` the log engine layer is ignored, and all the read and write requests are directly processed by the storage engine. In this chapter we'll try to build the log engine as described above. In `standalone_storage` a single badger instance is used as the storage engine.
+There will be two `badger` instances in `raftStore`, the first one is used as the storage engine or state machine just like the `standalone_storage`, the second one will be used by the log engine in `raftStore` to persist raft logs. In `kv/util/engine_util/engines.go` you could find `Kv` and `Raft` struct members, the `Kv` instance is used as the storage engine and the `Raft` is used by the raft log engine.
 
-`raftStore` 的工作流程是：
+The workflow of the `raftStore` is:
 
 ![raftStore](imgs/raftstore.png)
 
-有一些重要的概念和抽象，其中一些已经在上面提到过，列表如下：
-- `RawNode`。raft 实例的包装器，`Step`、`Ready` 和 `Advance` 接口由上层使用以驱动 raft 进程。`RawNode` 及其内部 raft 实例不负责实际发送消息和持久化日志，它们将设置在结果 `Ready` 结构中，上层将处理 ready 结果以完成实际工作。
-- `Ready`。ready 是 raft 实例的输出，期望由上层处理，例如将消息发送到其他节点并将信息持久化到日志引擎。有关 `Ready` 的更多信息，请参见 `kv/raft/rawnode.go` 中的注释。
+There are some important concepts and abstracts, some of which are already referred to above, the lists are:
+- `RawNode`. A wrap of the raft instance, the `Step`, `Ready` and `Advance` interfaces are used by the upper layer to drive the raft process. The `RawNode` and its inner raft instance are not responsible for actually sending messages and persisting logs, they will be set in the result `Ready` struct and the upper layer will process the ready result doing the real work. 
+- `Ready`. The ready is the output of the raft instance, they are expected to be processed by the upper layer, for example sending messages to other nodes and persist information to the log engine. More information about `Ready` could be found in the comments in `kv/raft/rawnode.go`.
 
-上面的概念或抽象是关于 raft 实例的。以下概念构建在 raft 实例或 `RawNode` 之上。
-- `Region`。区域是一个 raft 组，负责处理与特定键范围相关的读/写请求。
-- `Peer`。peer 是 raft 组或区域的成员，默认情况下使用 3 个副本，一个区域将有 3 个不同的 peer。一个 peer 内部将有一个 `RawNode`，其中包含一个 raft 实例。
-- `raftWorker`。worker 用于处理路由到不同区域领导者或区域 peer 的所有客户端请求。
-- `peerMsgHandler`。委托用于处理特定领导者 peer 的客户端请求。
-- `applyWorker`。在提交 proposed 请求和相关日志后，相应的 apply 请求将路由到 `applyWorker`，然后这些日志将应用于状态机，该状态机是 tinykv 中的 `badger` 存储引擎。
-
-
-将它们放在一起，消息流可以分为两个阶段：
-
-- **日志共识阶段**。客户端请求通过回调发送到路由器，`raftWorker` 将使用相应的 peer 消息处理程序来处理请求。
-- **日志应用阶段**。在 raft 组提交日志后，apply 请求将发送到 apply 路由器，`applyWorker` 将处理 apply 请求，最后调用回调，然后允许将结果响应给客户端。
-
-可能有助于理解 `raftStore` 的文档：
-- [raftStore 代码分析](https://pingcap.com/blog-cn/tikv-source-code-reading-17)
-- [tikv 源代码阅读 raft propose](https://pingcap.com/blog-cn/tikv-source-code-reading-2)
-- [tikv 源代码阅读 raft commit/apply](https://pingcap.com/blog-cn/tikv-source-code-reading-18)
-
-尝试在以下位置实现缺失的代码：
-- `kv/raftstore/peer_msg_handler.go`，`proposeRaftCommand` 方法，它是读/写请求 proposing 的核心部分。
-- `kv/raftstore/peer.go`，`HandleRaftReady` 方法，它是 raft ready 处理的核心部分。
-- `kv/raftstore/peer_storage.go`，`SaveReadyState` 方法，它是状态和日志持久性的核心部分。
-- `kv/raftstore/peer_storage.go`，`Append` 方法，它将来自 raft ready 的日志附加到日志引擎。
+The above concepts or abstractions are about the raft instance. The following concepts are built above the raft instance or `RawNode`.
+- `Region`. A region is a raft group and is responsible for the read/write requests processing related to specific key ranges.
+- `Peer`. A peer is a member of a raft group or a region, by default 3 replicas are used and a region will have 3 different peers. A peer will have a `RawNode` inside which contains a raft instance.
+- `raftWorker`. The worker to process all the client requests routed to different region leaders or region peers.
+- `peerMsgHandler`. The delegate used to process the client requests for a specific leader peer.
+- `applyWorker`. After the proposed requests and the related logs are committed, correspond apply requests will be routed to the `applyWorker`, then these logs will be applied to the state machine which is the `badger` storage engine in tinykv.
 
 
-这些代码部分的入口点标记为：
+Putting them together, the message flows could be split into two phases:
+
+- **The log consensus phase**. The client requests are sent to the router with callbacks, `raftWorker` will handle the requests using correspond peer message handler.
+- **The log apply phase**. After the logs are committed by the raft group, apply requests will be sent to the apply router, `applyWorker` will handle the apply requests and finally invoke the callbacks and then it's allowed to respond results to the client.
+
+Documents which could be helpful to understand the `raftStore`:
+- [raftStore code analysis](https://pingcap.com/blog-cn/tikv-source-code-reading-17)
+- [tikv source code reading raft propose](https://pingcap.com/blog-cn/tikv-source-code-reading-2)
+- [tikv source code reading raft commit/apply](https://pingcap.com/blog-cn/tikv-source-code-reading-18)
+
+Try to implement the missing code in:
+- `kv/raftstore/peer_msg_handler.go`, the `proposeRaftCommand` method, which is the core part of read/write requests proposing.
+- `kv/raftstore/peer.go`, the `HandleRaftReady` method, which is the core part of raft ready processing.
+- `kv/raftstore/peer_storage.go`, the `SaveReadyState` method, which is core part of the states and logs persistency.
+- `kv/raftstore/peer_storage.go`, the `Append` method, it appends the logs from raft ready to the log engine.
+
+
+These code part entrances are marked with:
 
 `// YOUR CODE HERE (lab1).`
 
-要完成的代码部分标记为
+The to be finished code parts are marked with
 
 `// Hintx: xxxxx`
 
-周围有一些有用的注释和指导。
+There are some useful comments and guidance around them.
 
 
-由于 `raftStore` 非常复杂，因此测试分为 4 个部分，`Makefile` 文件中有更多信息，测试顺序为：
-- `make lab1P1a`。这是关于 `raftStore` 逻辑的基本测试。
-- `make lab1P1b` 带有故障注入。这是关于 `raftStore` 逻辑的基本测试。
-- `make lab1P2a`。这是关于 `raftStore` 的持久性测试。
-- `make lab1P2b` 带有故障注入。这是关于 `raftStore` 的持久性测试。
-- `make lab1P3a`。这是关于 `raftStore` 的快照相关测试。
-- `make lab1P3b` 带有故障注入。这是关于 `raftStore` 的快照相关测试。
-- `make lab1P4a`。这是关于 `raftStore` 的配置更改测试。
-- `make lab1P4b` 带有故障注入。这是关于 `raftStore` 的配置更改测试。
+As the `raftStore` is quite complex so the tests are split into 4 parts, there is more information in the `Makefile` file, the order of the tests are:
+- `make lab1P1a`. This is about the basic tests of `raftStore` logic.
+- `make lab1P1b` with fault injections. This is about the basic tests of `raftStore` logic.
+- `make lab1P2a`. This is about the persistency tests of `raftStore`.
+- `make lab1P2b` with fault injections. This is about the persistency tests of `raftStore`.
+- `make lab1P3a`. This is about the snapshot related tests of `raftStore`.
+- `make lab1P3b` with fault injections. This is about the snapshot related tests of `raftStore`.
+- `make lab1P4a`. This is about the configuration change tests of `raftStore`.
+- `make lab1P4b` with fault injections. This is about the configuration change tests of `raftStore`.
 
-需要注意的事项：
-- 当测试失败时，`/tmp/test-raftstore-xxx` 中将存在一些垃圾目录或文件，可以通过手动删除它们，或者可以使用 `make clean` 命令来执行清理工作。
-- 测试可能会消耗大量内存，最好使用具有 RAM(>= 16 GB) 的开发机器，如果由于 OOM 导致测试无法一起运行，请尝试使用 `go test -v ./kv/test_raftstore -run test_name` 等命令逐个运行它们。
-- 尝试在运行测试之前设置更大的打开文件限制，例如 `ulimit -n 8192`。
-- raft 包提供 raft 实现。它被包装到 `RawNode` 中，`Step` 和 `Ready` 是使用 `RawNode` 的核心接口。
-- `RaftStorage` 中将有不同类型的工作人员，最重要的工作人员是 `raftWorker` 和 `applyWorker`。
-- 尝试理解整个消息处理：一个新的输入客户端请求并使用结果响应客户端。由于有不同的工作人员并且 raft 共识需要几个步骤，因此客户端请求可能会转发给不同的工作人员，并且回调也将用于将结果通知给调用者。
+Things to note:
+- When the tests failed, there will be some trash directory or files in `/tmp/test-raftstore-xxx`, they could be removed by hand, or the `make clean` command could be used to do the cleanup work.
+- The tests may consume much memory, better to use a development machine with RAM(>= 16 GB), if the tests could not run together because of OOM, try to run them one by one using commands like `go test -v ./kv/test_raftstore -run test_name`.
+- Try to set bigger open file limits before running the tests, for example `ulimit -n 8192`.
+- The raft package provides the raft implementation. It's wrapped into `RawNode` and the `Step` and `Ready` are the core interfaces to use the `RawNode`.
+- There will be different kinds of workers in the `RaftStorage`, the most important worker is the `raftWorker` and `applyWorker`.
+- Try to understand the whole message processing a new input client request and response to the client with results. As there are different workers and the raft consensus needs several steps, a client request will be possibly forwarded to different workers, also callbacks will be used to notify the caller with results.  

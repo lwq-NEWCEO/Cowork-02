@@ -31,14 +31,15 @@ func (s *StandAloneStorage) Stop() error {
 }
 
 func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, error) {
-	// YOUR CODE HERE (lab1).
+	// YOUR CODE HERE (DONE).
 	return NewBadgerReader(s.db.NewTransaction(false)), nil
 }
 
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
-	// YOUR CODE HERE (lab1).
+	// YOUR CODE HERE (DONE).
 	// Try to check the definition of `storage.Modify` and txn interface of `badger`.
 	// As the column family is not supported by `badger`, a wrapper is used to simulate it.
+
 	for _, m := range batch {
 		switch data := m.Data.(type) {
 		case storage.Put:
