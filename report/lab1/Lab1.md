@@ -1,6 +1,11 @@
 # 任务概述
+
+### 这部分是小组两位成员共同完成
+
 Lab1的任务是完成这个教学版数据管理系统的存储引擎，同时逐步了解这个数据管理系统的结构，实现`raftStore`和`storeEngine`。
+
 `raftStore`为分布式存储提供基础设施，它处理请求并将日志发送到对应的`Raft Group`中。
+
 `storeEngine`是lab1中我们主要需要实现的内容，这里我们可以参考`badger`存储引擎的实现，在它的基础上实现**列族**(Column Family)的功能，代码中的缩写一般为CF。
 
 **注意要用固态跑实验，实测西数蓝盘会导致timeout**
@@ -185,8 +190,9 @@ func DeleteCF(engine *badger.DB, cf string, key []byte) error {
 }
 ```
 
+
 ## 测试结果
-![测试通过截图](pic/lab1-standalone-test.png)
+![测试通过截图](pho/lab1-0.png)
 
 # 代码实现-RaftStorage
 接下来我们需要实现基于Raft的分布式存储。这里的相关内容在作业的readme中有详细的描述
@@ -507,26 +513,26 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 ## 测试结果
 **Part1 A**
 
-![Part1 A 测试截图](pic/lab1-part1a.png)
+![Part1 A 测试截图](pho/lab1-part1a.png)
 
 **Part1 B**
-![Part1 B 测试截图](pic/lab1-part1b.png)
+![Part1 B 测试截图](pho/lab1-part1b.png)
 
 **Part2 A**
-![Part2 A 测试截图](pic/lab1-part2a.png)
+![Part2 A 测试截图](pho/lab1-part2a.png)
 
 **Part2 B**
-![Part2 B 测试截图](pic/lab1-part2b.png)
+![Part2 B 测试截图](pho/lab1-part2b.png)
 
 **Part3 A**
-![Part3 A 测试截图](pic/lab1-part3a.png)
+![Part3 A 测试截图](pho/lab1-part3a.png)
 
 **Part3 B**
-![Part3 B 测试截图](pic/lab1-part3b.png)
+![Part3 B 测试截图](pho/lab1-part3b.png)
 
 **Part4 A**
-![Part4 A 测试截图](pic/lab1-part4a.png)
+![Part4 A 测试截图](pho/lab1-part4a.png)
 
 **Part4 B**
-![Part4 B 测试截图](pic/lab1-part4b.png)
+![Part4 B 测试截图](pho/lab1-part4b.png)
 
