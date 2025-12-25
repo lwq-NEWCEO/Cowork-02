@@ -8,7 +8,7 @@ Lab1的任务是完成这个教学版数据管理系统的存储引擎，同时�
 
 `storeEngine`是lab1中我们主要需要实现的内容，这里我们可以参考`badger`存储引擎的实现，在它的基础上实现**列族**(Column Family)的功能，代码中的缩写一般为CF。
 
-**注意要用固态跑实验，实测西数蓝盘会导致timeout**
+典型的存储引擎模式：读操作通过快照保证一致性，写操作通过批量操作保证原子性。
 
 # 代码实现-StandaloneStorage
 首先我们看一下各个模块分别是干什么的，lab1主要的代码位于`tinykv/kv`文件夹中，其存储引擎位于`storage`中，我们要实现的是StandaloneStorage中的`Reader`和`Write`函数。它们是`Storage`接口的一部分
@@ -535,4 +535,5 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 
 **Part4 B**
 ![Part4 B 测试截图](pho/lab1-part4b.png)
+
 
