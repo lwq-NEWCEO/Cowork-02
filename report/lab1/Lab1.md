@@ -196,6 +196,9 @@ func DeleteCF(engine *badger.DB, cf string, key []byte) error {
 
 # 代码实现-RaftStorage
 接下来我们需要实现基于Raft的分布式存储。这里的相关内容在作业的readme中有详细的描述
+
+在 RaftStorage 部分，我补全了 TinyKV raftstore 的关键链路：首先在 proposeRaftCommand 中完成请求的合法性检查、region/peer 停止状态处理，并将请求绑定当前 term 后通过 Propose 提交到 Raft 日志。随后在 HandleRaftReady 中实现 Ready 的完整处理流程：无 Ready 直接返回；对 Ready 先持久化（调用 SaveReadyState），再按 Leader/Follower 角色发送消息，并根据是否包含 snapshot 决定投递 ApplyRefresh 或 ApplyCommitted；最后调用 Advance 推进 RawNode 状态，避免 Ready 堵塞。最后在 PeerStorage 中实现 Append 与 SaveReadyState：将 entries 按 index 写入 raft log、删除冲突尾部日志并更新 LastIndex/LastTerm，同时持久化 HardState，并将 kv/raft 两个 write batch 落盘，保证崩溃恢复与复制一致性。
+
 ![Raft 协议在分布式存储中的应用](pho/raft.png)
 ## 代码层次
 主要的代码位于tinykv/kv/raftstore目录中。需要实现的代码分布在如下几个文件中：
@@ -535,5 +538,6 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 
 **Part4 B**
 ![Part4 B 测试截图](pho/lab1-part4b.png)
+
 
 
