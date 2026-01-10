@@ -199,6 +199,58 @@ func DeleteCF(engine *badger.DB, cf string, key []byte) error {
 
 在 RaftStorage 部分，我补全了 TinyKV raftstore 的关键链路：首先在 proposeRaftCommand 中完成请求的合法性检查、region/peer 停止状态处理，并将请求绑定当前 term 后通过 Propose 提交到 Raft 日志。随后在 HandleRaftReady 中实现 Ready 的完整处理流程：无 Ready 直接返回；对 Ready 先持久化（调用 SaveReadyState），再按 Leader/Follower 角色发送消息，并根据是否包含 snapshot 决定投递 ApplyRefresh 或 ApplyCommitted；最后调用 Advance 推进 RawNode 状态，避免 Ready 堵塞。最后在 PeerStorage 中实现 Append 与 SaveReadyState：将 entries 按 index 写入 raft log、删除冲突尾部日志并更新 LastIndex/LastTerm，同时持久化 HardState，并将 kv/raft 两个 write batch 落盘，保证崩溃恢复与复制一致性。
 
+1.1 写请求进入 Raft（Propose 路径）
+[客户端请求 RaftCmdRequest]
+        |
+        v
+peer_msg_handler.proposeRaftCommand(msg, cb)
+   |
+   |-- (1) preProposeRaftCommand(msg)  校验请求合法性
+   |         - 不合法：cb.Done(ErrResp(err)) 直接返回
+   |
+   |-- (2) stopped?  peer已销毁/region removed
+   |         - 是：NotifyReqRegionRemoved(regionID, cb) 返回
+   |
+   |-- (3) term + resp 绑定
+   |         BindRespTerm(resp, d.Term())
+   |
+   `-- (4) Propose(engine.Kv, cfg, cb, msg, resp)
+             -> 形成 raft log entry，进入 RaftGroup
+
+
+proposeRaftCommand 把“客户端命令”变成“Raft 日志提议”，之后能否生效取决于是否被多数派提交并 apply。
+
+1.2 Raft 输出 Ready 的处理（Ready 路径）
+peer.HandleRaftReady(...)
+   |
+   |-- (0) HasReady? 没有则直接 return
+   |
+   |-- ready := RaftGroup.Ready()
+   |-- leader?  先并发 Send(ready.Messages)（优化）
+   |
+   |-- applySnapResult := peerStorage.SaveReadyState(&ready)
+   |      |
+   |      |-- SaveReadyState:
+   |      |     a) Snapshot? ApplySnapshot -> 写 kvWB + raftWB
+   |      |     b) Entries?  Append(entries, raftWB)   (写 raft log)
+   |      |     c) HardState? 持久化 raftStateKey
+   |      |     d) kvWB.WriteTo(Kv) + raftWB.WriteTo(Raft)
+   |      |
+   |
+   |-- follower?  Send(ready.Messages)（严格“先落盘后发消息”）
+   |
+   |-- apply 分支：
+   |      |
+   |      |-- 有 snapshot：发 MsgTypeApplyRefresh（通知apply worker刷新）
+   |      |
+   |      `-- 否则：取 ready.CommittedEntries
+   |               -> 发 MsgTypeApplyCommitted（让apply worker按序apply）
+   |
+   `-- RaftGroup.Advance(ready)   (推进 RawNode 状态机，必须做)
+
+HandleRaftReady 是把 Ready 按“先持久化→再发消息→再 apply→最后 Advance”的顺序处理，确保崩溃恢复安全与副本一致。
+
+
 ![Raft 协议在分布式存储中的应用](pho/raft.png)
 ## 代码层次
 主要的代码位于tinykv/kv/raftstore目录中。需要实现的代码分布在如下几个文件中：
@@ -538,6 +590,7 @@ func (ps *PeerStorage) SaveReadyState(ready *raft.Ready) (*ApplySnapResult, erro
 
 **Part4 B**
 ![Part4 B 测试截图](pho/lab1-part4b.png)
+
 
 
 
